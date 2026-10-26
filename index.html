@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TMC2160 Register Configurator</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <div class="logo">2160</div>
+    <div><h1>TMC2160 Register Configurator</h1><small>Full register editor · TMC2160A Rev. 1.10</small></div>
+  </div>
+  <div class="toolbar">
+    <div class="channel-controls">
+      <label>Channels
+        <select id="channelCount" class="channel-select">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3" selected>3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+          <option value="6">6</option>
+        </select>
+      </label>
+      <label>Edit
+        <select id="activeChannelSelect" class="channel-select"></select>
+      </label>
+      <button class="btn" id="copyChannelBtn" title="Copy the active channel configuration to the next channel">Copy → next</button>
+    </div>
+    <button class="btn primary" id="wizardBtn">Configuration Wizard</button>
+    <button class="btn" id="stallDialogBtn" type="button">StallGuard Setup</button>
+    <button class="btn" id="clearBtn">Clear channel</button>
+    <button class="btn" id="importBtn">Import JSON</button>
+    <button class="btn" id="exportBtn">Export JSON</button>
+    <button class="btn primary" id="copyBtn">Copy C init</button>
+  </div>
+</div>
+
+<div class="layout">
+  <aside class="sidebar">
+    <input id="search" class="search" placeholder="Search register or address…">
+    <div class="filters">
+      <button class="btn filter" data-filter="all">All</button>
+      <button class="btn filter" data-filter="w">Writable</button>
+      <button class="btn filter" data-filter="r">Read-only</button>
+      <button class="btn filter" data-filter="changed">Included</button>
+    </div>
+    <label class="advanced-toggle">
+      <input id="hideAdvanced" type="checkbox" checked>
+      <span><b>Hide uncommon registers</b><small>Hides OTP, LUT, direct-mode, dcStep and other rarely edited registers. Uncheck to show the complete register map.</small></span>
+    </label>
+    <div id="reglist" class="reglist"></div>
+  </aside>
+
+  <main class="main">
+    <div class="card">
+      <div class="reghead">
+        <div class="regtitle">
+          <h2 id="regName"></h2>
+          <div class="sub" id="regDesc"></div>
+        </div>
+        <div class="badges" id="badges"></div>
+      </div>
+      <div id="regWarning"></div>
+      <div class="editor">
+        <div class="rawrow">
+          <div class="group"><label>HEX VALUE</label><input id="hexValue" class="inp" spellcheck="false"></div>
+          <div class="group"><label>DECIMAL</label><input id="decValue" class="inp" spellcheck="false"></div>
+          <div class="group"><label>BINARY</label><input id="binValue" class="inp" spellcheck="false"></div>
+          <label class="include"><input id="includeReg" type="checkbox"> Include in C init</label>
+        </div>
+        <div class="bits" id="bits"></div>
+      </div>
+    </div>
+
+    <div class="card section">
+      <h3>Fields</h3>
+      <div id="fields" class="fieldtable"></div>
+    </div>
+  </main>
+
+  <aside class="rightbar">
+    <div class="rightblock">
+      <h3>Generated C</h3>
+      <div class="currentgrid">
+        <div class="group"><label>CHANNEL EXPRESSION</label><input id="channelExpr" class="inp" value="channel"></div>
+        <div class="group"><label>OUTPUT MODE</label>
+          <select id="outputMode" class="inp">
+            <option value="struct" selected>Multi-channel struct array</option>
+            <option value="included">Active channel — included registers</option>
+            <option value="writable">Active channel — all writable registers</option>
+          </select>
+        </div>
+      </div>
+      <textarea id="code" class="code" readonly></textarea>
+      <div class="footerhint">Multi-channel mode generates one register-setting array per channel plus a channel-config struct array and an apply helper. Full 32-bit writes are used for write-only registers.</div>
+    </div>
+
+    <div class="rightblock">
+      <h3>Configuration checks</h3>
+      <div id="issues"></div>
+    </div>
+
+    <div class="rightblock card section">
+      <h3>Motor current estimate</h3>
+      <div class="currentgrid">
+        <div class="group"><label>RSENSE (mΩ)</label><input id="rsense" class="inp" type="number" value="20" step="0.1" min="0.1"></div>
+        <div class="group"><label>VFS (mV)</label><input id="vfs" class="inp" type="number" value="325" step="1"></div>
+      </div>
+      <div class="currentval"><span id="runCurrent">—</span> mA RMS</div>
+      <div class="mini">Uses GLOBAL_SCALER and IHOLD_IRUN.IRUN from the editor. GLOBAL_SCALER=0 is treated as 256.</div>
+      <hr>
+      <div class="currentval" style="font-size:17px"><span id="holdCurrent">—</span> mA RMS hold</div>
+    </div>
+  </aside>
+</div>
+
+
+<div id="wizardModal" class="wiz-overlay" aria-hidden="true">
+  <div class="wiz-shell">
+    <aside class="wiz-side">
+      <h2>Setup Wizard</h2>
+      <p>Configure a practical STEP/DIR setup without manually editing every bit.</p>
+      <div id="wizardSteps" class="wiz-steps"></div>
+    </aside>
+
+    <section class="wiz-main">
+      <div class="wiz-head">
+        <div style="flex:1">
+          <h2 id="wizTitle">Motor & hardware</h2>
+          <p id="wizSubtitle">Enter the values that describe your motor and board.</p>
+          <div class="wiz-channelbar">
+            <span>Configure channel:</span>
+            <div id="wizChannelTabs" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+            <button id="wizCopyPrev" class="btn" type="button">Copy previous</button>
+          </div>
+        </div>
+        <button id="wizClose" class="wiz-close" title="Close">×</button>
+      </div>
+
+      <div class="wiz-body">
+        <div class="wiz-page" data-step="0">
+          <div class="wiz-grid">
+            <div class="wiz-card">
+              <h3>Motor</h3>
+              <p>These values are used by the current and threshold calculators.</p>
+              <div class="wiz-row">
+                <label class="wiz-label">Rated phase current, RMS (A)</label>
+                <input id="wMotorCurrent" class="inp" type="number" value="2.0" min="0.01" step="0.05">
+              </div>
+              <div class="wiz-row">
+                <label class="wiz-label">Full steps / revolution</label>
+                <input id="wFullSteps" class="inp" type="number" value="200" min="1" step="1">
+              </div>
+              <div class="wiz-row">
+                <label class="wiz-label">Hold current (%)</label>
+                <input id="wHoldPercent" class="inp" type="number" value="30" min="3" max="100" step="1">
+              </div>
+            </div>
+            <div class="wiz-card">
+              <h3>Driver board</h3>
+              <p>Enter actual hardware values, not motor nameplate values.</p>
+              <div class="wiz-row">
+                <label class="wiz-label">Sense resistor (mΩ)</label>
+                <input id="wRsense" class="inp" type="number" value="20" min="0.1" step="0.1">
+              </div>
+              <div class="wiz-row">
+                <label class="wiz-label">TMC2160 clock (MHz)</label>
+                <input id="wClockMHz" class="inp" type="number" value="12" min="1" step="0.1">
+              </div>
+              <div class="wiz-row">
+                <label class="wiz-label">Motor supply VM (V) — informational</label>
+                <input id="wVm" class="inp" type="number" value="48" min="5" step="1">
+              </div>
+            </div>
+          </div>
+          <div class="wiz-note">The wizard does not change short-circuit thresholds or MOSFET gate timing automatically from motor data. Those depend on your MOSFETs, gate charge, PCB and switching waveforms.</div>
+        </div>
+
+        <div class="wiz-page" data-step="1">
+          <div class="wiz-grid">
+            <div class="wiz-card">
+              <h3>STEP/DIR behavior</h3>
+              <div class="wiz-row">
+                <label class="wiz-label">Microsteps</label>
+                <select id="wMicrosteps" class="inp">
+                  <option>256</option><option>128</option><option>64</option><option>32</option>
+                  <option selected>16</option><option>8</option><option>4</option><option>2</option><option>1</option>
+                </select>
+              </div>
+              <div class="wiz-row">
+                <label class="wiz-option"><input id="wInterpolation" type="checkbox" checked><span><b>Enable interpolation</b><small>Interpolate lower external microstep resolutions toward 256 internal microsteps.</small></span></label>
+              </div>
+              <div class="wiz-row">
+                <label class="wiz-option"><input id="wMultistep" type="checkbox" checked><span><b>Enable STEP input filter</b><small>Uses GCONF.MULTISTEP_FILT.</small></span></label>
+              </div>
+            </div>
+            <div class="wiz-card">
+              <h3>Direction and STEP edge</h3>
+              <div class="wiz-row">
+                <label class="wiz-option"><input id="wReverse" type="checkbox"><span><b>Reverse motor direction</b><small>Sets GCONF.SHAFT.</small></span></label>
+              </div>
+              <div class="wiz-row">
+                <label class="wiz-option"><input id="wDoubleEdge" type="checkbox"><span><b>Count both STEP edges</b><small>Normally leave this off. When enabled, rising and falling edges both count.</small></span></label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="wiz-page" data-step="2">
+          <div class="wiz-grid">
+            <div class="wiz-card">
+              <h3>Current scaling method</h3>
+              <div class="wiz-radio">
+                <label class="wiz-option"><input type="radio" name="wCurrentMode" value="irun" checked>
+                  <span><b>IRUN only</b><small>GLOBAL_SCALER = 0. Simple, but current steps can be coarse with a small Rsense.</small></span></label>
+                <label class="wiz-option"><input type="radio" name="wCurrentMode" value="global">
+                  <span><b>IRUN + GLOBAL_SCALER</b><small>Keeps IRUN high when possible and uses GLOBAL_SCALER for finer control.</small></span></label>
+              </div>
+            </div>
+            <div class="wiz-card">
+              <h3>Calculated current</h3>
+              <div id="wCurrentPreview" class="wiz-preview">—</div>
+              <div id="wCurrentWarn" class="wiz-note warn wiz-hidden"></div>
+            </div>
+          </div>
+          <div class="wiz-note">The calculation uses VFS = 0.325 V, matching the current calculator in this configurator. Verify this assumption against your exact hardware/silicon setup before relying on the number as a measurement.</div>
+        </div>
+
+        <div class="wiz-page" data-step="3">
+          <div class="wiz-grid">
+            <div class="wiz-card">
+              <h3>Chopper mode</h3>
+              <div class="wiz-radio">
+                <label class="wiz-option"><input type="radio" name="wChopperMode" value="spread" checked>
+                  <span><b>SpreadCycle only</b><small>Good baseline for bring-up and fault diagnosis.</small></span></label>
+                <label class="wiz-option"><input type="radio" name="wChopperMode" value="hybrid">
+                  <span><b>StealthChop at low speed</b><small>Use StealthChop below a chosen RPM and SpreadCycle above it.</small></span></label>
+              </div>
+              <div id="wStealthOptions" class="wiz-row wiz-hidden" style="margin-top:12px">
+                <label class="wiz-label">Switch to SpreadCycle above (RPM)</label>
+                <input id="wPwmRpm" class="inp" type="number" value="60" min="0.1" step="1">
+              </div>
+            </div>
+            <div class="wiz-card">
+              <h3>SpreadCycle base settings</h3>
+              <p>These are explicit wizard values; they are not motor-specific auto-tuning.</p>
+              <div class="wiz-grid three">
+                <div class="wiz-row"><label class="wiz-label">TOFF</label><input id="wToff" class="inp" type="number" value="5" min="1" max="15"></div>
+                <div class="wiz-row"><label class="wiz-label">TBL</label>
+                  <select id="wTbl" class="inp"><option value="0">16 clocks</option><option value="1" selected>24 clocks</option><option value="2">36 clocks</option><option value="3">54 clocks</option></select>
+                </div>
+                <div class="wiz-row"><label class="wiz-label">IHOLDDELAY</label><input id="wIholdDelay" class="inp" type="number" value="6" min="0" max="15"></div>
+              </div>
+              <label class="wiz-option"><input id="wKeepHyst" type="checkbox" checked><span><b>Keep existing HSTRT/HEND</b><small>The wizard will not overwrite hysteresis fields unless you edit them manually later.</small></span></label>
+            </div>
+          </div>
+        </div>
+
+        <div class="wiz-page" data-step="4">
+          <div class="wiz-grid">
+            <div class="wiz-card">
+              <h3>StallGuard</h3>
+              <div class="wiz-row">
+                <label class="wiz-option"><input id="wStallEnable" type="checkbox"><span><b>Enable StallGuard window</b><small>Configures TCOOLTHRS and optional DIAG stall output.</small></span></label>
+              </div>
+              <div id="wStallOptions" class="wiz-hidden">
+                <div class="wiz-row"><label class="wiz-label">Enable above motor speed (RPM)</label><input id="wStallRpm" class="inp" type="number" value="30" min="0.1" step="1"></div>
+                <div class="wiz-row"><label class="wiz-label">SGT (-64…63)</label><input id="wSgt" class="inp" type="number" value="0" min="-64" max="63"></div>
+                <div class="wiz-row"><label class="wiz-label">DIAG output</label>
+                  <select id="wDiag" class="inp"><option value="none">None</option><option value="diag0">DIAG0</option><option value="diag1" selected>DIAG1</option></select>
+                </div>
+                <label class="wiz-option"><input id="wSfilt" type="checkbox"><span><b>Enable StallGuard filter</b><small>More filtering, slower response.</small></span></label>
+              </div>
+            </div>
+            <div class="wiz-card">
+              <h3>CoolStep</h3>
+              <div class="wiz-row">
+                <label class="wiz-option"><input id="wCoolEnable" type="checkbox"><span><b>Enable CoolStep</b><small>Current adapts according to motor load. Configure only after basic fixed-current operation is stable.</small></span></label>
+              </div>
+              <div id="wCoolOptions" class="wiz-hidden">
+                <div class="wiz-grid">
+                  <div class="wiz-row"><label class="wiz-label">SEMIN</label><input id="wSemin" class="inp" type="number" value="5" min="1" max="15"></div>
+                  <div class="wiz-row"><label class="wiz-label">SEMAX</label><input id="wSemax" class="inp" type="number" value="2" min="0" max="15"></div>
+                  <div class="wiz-row"><label class="wiz-label">SEUP</label><input id="wSeup" class="inp" type="number" value="1" min="0" max="3"></div>
+                  <div class="wiz-row"><label class="wiz-label">SEDN</label><input id="wSedn" class="inp" type="number" value="1" min="0" max="3"></div>
+                </div>
+                <label class="wiz-option"><input id="wSeimin" type="checkbox"><span><b>Higher CoolStep minimum current</b><small>Sets SEIMIN=1.</small></span></label>
+              </div>
+            </div>
+          </div>
+          <div class="wiz-note warn">StallGuard does not work reliably at very low motor speed. The RPM threshold here exists specifically to keep it disabled below the chosen speed.</div>
+        </div>
+
+        <div class="wiz-page" data-step="5">
+          <div class="wiz-grid">
+            <div class="wiz-card">
+              <h3>MOSFET gate driver</h3>
+              <div class="wiz-row">
+                <label class="wiz-label">DRVSTRENGTH</label>
+                <select id="wDrvStrength" class="inp">
+                  <option value="0">0 — Weak</option>
+                  <option value="1">1 — Weak + temperature compensation</option>
+                  <option value="2" selected>2 — Medium</option>
+                  <option value="3">3 — Strong</option>
+                </select>
+              </div>
+              <div class="wiz-note">Gate strength cannot be selected correctly from motor current alone. Verify gate rise/fall time, dead-time and VDS overshoot with an oscilloscope.</div>
+            </div>
+            <div class="wiz-card">
+              <h3>Protection and power-down</h3>
+              <div class="wiz-row">
+                <label class="wiz-label">Standstill power-down delay (ms)</label>
+                <input id="wPowerdownMs" class="inp" type="number" value="250" min="0" step="10">
+              </div>
+              <label class="wiz-option"><input id="wProtect" type="checkbox" checked><span><b>Keep short protections enabled</b><small>Forces CHOPCONF.DISS2G=0 and DISS2VS=0.</small></span></label>
+            </div>
+          </div>
+        </div>
+
+        <div class="wiz-page" data-step="6">
+          <h3 style="margin-top:0">Review changes</h3>
+          <p class="mini">Only the registers shown below will be changed and automatically added to the generated C configuration.</p>
+          <div id="wKpi" class="wiz-kpi"></div>
+          <div id="wSummary" class="wiz-summary"></div>
+          <div id="wReviewWarnings"></div>
+        </div>
+      </div>
+
+      <div class="wiz-footer">
+        <span id="wizProgress" class="wiz-progress"></span>
+        <span class="spacer"></span>
+        <button id="wizBack" class="btn">Back</button>
+        <button id="wizNext" class="btn primary">Next</button>
+        <button id="wizApply" class="btn good wiz-hidden">Apply configuration</button>
+      </div>
+    </section>
+  </div>
+</div>
+
+
+<div id="sgDialog" class="sg-overlay" role="dialog" aria-modal="true" aria-labelledby="sgTitle" aria-hidden="true">
+ <div class="sg-panel">
+   <div style="display:flex;align-items:flex-start;gap:12px;justify-content:space-between">
+     <div><h2 id="sgTitle">StallGuard2 configuration</h2><p class="sg-sub" id="sgChannelLabel">Configure the selected channel</p></div>
+     <button type="button" id="sgClose" class="wiz-close" aria-label="Close">×</button>
+   </div>
+   <label class="sg-check"><input type="checkbox" id="sgEnable"> Enable StallGuard velocity window (TCOOLTHRS)</label>
+   <div class="sg-grid">
+      <div class="sg-line"><label for="sgSensitivity">SGT — sensitivity (-64 to 63)</label><input class="inp" type="number" id="sgSensitivity" min="-64" max="63" step="1"><div class="mini">Negative = more sensitive; positive = less sensitive. Tune with actual load.</div></div>
+      <div class="sg-line"><label for="sgDiag">DIAG stall indication</label><select class="inp" id="sgDiag"><option value="none">No DIAG output</option><option value="diag0">DIAG0_STALL</option><option value="diag1">DIAG1_STALL</option></select><div class="mini">Select an output if your MCU monitors a DIAG pin.</div></div>
+      <div class="sg-line"><label for="sgMinRpm">Minimum motor speed (RPM)</label><input class="inp" type="number" id="sgMinRpm" min="0.01" step="0.1"><div class="mini">Below this speed, StallGuard threshold is inactive.</div></div>
+      <div class="sg-line"><label for="sgTcoolRaw">TCOOLTHRS raw (1–1048575)</label><input class="inp" type="number" id="sgTcoolRaw" min="1" max="1048575" step="1"><div class="mini">You can edit the raw value directly.</div></div>
+      <div class="sg-line"><label for="sgFullSteps">Motor full steps per revolution</label><input class="inp" type="number" id="sgFullSteps" min="1" max="100000" step="1" value="200"></div>
+      <div class="sg-line"><label for="sgClock">Driver clock frequency (MHz)</label><input class="inp" type="number" id="sgClock" min="0.1" step="0.1" value="12"></div>
+   </div>
+   <label class="sg-check"><input type="checkbox" id="sgFilter"> SFILT — enable filtered StallGuard readings</label>
+   <div class="sg-detail" id="sgPreview" aria-live="polite"></div>
+   <p class="mini">StallGuard2 needs suitable motor velocity and SpreadCycle operation. TCOOLTHRS is also shared with CoolStep; disabling the window can affect CoolStep. THIGH may limit the high-speed operating window. See TMC2160A datasheet Rev. 1.10, COOLCONF and TCOOLTHRS.</p>
+   <div class="sg-actions"><button class="btn" type="button" id="sgCancel">Cancel</button><button class="btn primary" type="button" id="sgApply">Apply to current channel</button></div>
+ </div>
+</div>
+
+<input type="file" id="fileInput" accept=".json" hidden>
+
+<script src="app.js"></script>
+</body>
+</html>
