@@ -552,11 +552,12 @@ function parseChannelHeader(source){
       const token=entry[1], raw=entry[2], value=Number(raw);
       if(!Number.isSafeInteger(value)||value<0||value>0xFFFFFFFF)
         throw Error("Invalid 32-bit value: "+raw);
+      // A generated empty channel uses { 0, 0 } as a non-writing sentinel.
+      if(token==="0" && value===0)continue;
       let reg=constants.get(token);
       if(!reg && /^(?:0[xX][\da-fA-F]+|\d+)$/.test(token))
         reg=REGS.find(r=>r.addr===Number(token));
       if(!reg){
-        if(token==="0" && value===0)continue; // Empty-channel sentinel
         throw Error("Unknown register token: "+token);
       }
       if(!writable(reg)||reg.danger)throw Error("Cannot import protected/read-only register: "+reg.name);
