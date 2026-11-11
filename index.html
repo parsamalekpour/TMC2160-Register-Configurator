@@ -32,9 +32,9 @@
     <button class="btn primary" id="wizardBtn">Configuration Wizard</button>
     <button class="btn" id="stallDialogBtn" type="button">StallGuard Setup</button>
     <button class="btn" id="clearBtn">Clear channel</button>
-    <button class="btn" id="importBtn">Import JSON</button>
-    <button class="btn" id="exportBtn">Export JSON</button>
-    <button class="btn primary" id="copyBtn">Copy C init</button>
+    <button class="btn" id="importBtn">Import C header</button>
+    <button class="btn" id="exportBtn">Export C header</button>
+    <button class="btn primary" id="copyBtn">Copy header</button>
   </div>
 </div>
 
@@ -83,19 +83,12 @@
 
   <aside class="rightbar">
     <div class="rightblock">
-      <h3>Generated C</h3>
+      <h3>Generated C header — TMC2160_CHANNEL_CONFIGS_H_</h3>
       <div class="currentgrid">
-        <div class="group"><label>CHANNEL EXPRESSION</label><input id="channelExpr" class="inp" value="channel"></div>
-        <div class="group"><label>OUTPUT MODE</label>
-          <select id="outputMode" class="inp">
-            <option value="struct" selected>Multi-channel struct array</option>
-            <option value="included">Active channel — included registers</option>
-            <option value="writable">Active channel — all writable registers</option>
-          </select>
-        </div>
+        <div class="mini">This preview is exactly what Export C header downloads. Only included writable registers are exported.</div>
       </div>
       <textarea id="code" class="code" readonly></textarea>
-      <div class="footerhint">Multi-channel mode generates one register-setting array per channel plus a channel-config struct array and an apply helper. Full 32-bit writes are used for write-only registers.</div>
+      <div class="footerhint">The header contains the channel count, per-channel register-setting arrays, and the configuration array. Define TMC2160_RegisterSetting, TMC2160_ChannelConfig, and register constants before including it.</div>
     </div>
 
     <div class="rightblock">
@@ -363,7 +356,7 @@
  </div>
 </div>
 
-<input type="file" id="fileInput" accept=".json" hidden>
+<input type="file" id="fileInput" accept=".h,.hpp,text/plain" hidden>
 
 <script src="app.js"></script>
 </body>
