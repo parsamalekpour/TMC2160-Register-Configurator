@@ -1,6 +1,6 @@
 # TMC2160 Register Configurator
 
-A browser-based register configuration tool for the **Trinamic / ADI TMC2160A** external-MOSFET stepper-motor driver. Edit register fields in meaningful units, configure multiple driver channels independently, and generate C initialization code for embedded firmware.
+A browser-based register configuration tool for the **Trinamic / ADI TMC2160A** external-MOSFET stepper-motor driver. Edit register fields in meaningful units, configure multiple driver channels independently, and generate or import the corresponding C configuration header for embedded firmware.
 
 Built with **plain HTML, CSS, and JavaScript**—no build step, backend, framework, or installation required.
 
@@ -16,8 +16,8 @@ Built with **plain HTML, CSS, and JavaScript**—no build step, backend, framewo
 - **StallGuard Setup dialog:** Configure `SGT`, `SFILT`, DIAG output selection, and the speed threshold (`TCOOLTHRS`) for the currently selected channel.
 - **Current estimator:** Show estimated run and hold RMS current using `RSENSE`, `VFS`, `GLOBAL_SCALER`, `IRUN`, and `IHOLD`.
 - **Configuration checks:** Flag selected potentially unsafe or inconsistent settings, including disabled short protection and `TOFF = 0`.
-- **C code generation:** Export per-channel register arrays and an apply helper, or output writes for the active channel only.
-- **JSON import/export:** Save and reload multi-channel settings.
+- **C header generation:** Generate `TMC2160_CHANNEL_CONFIGS.h` with per-channel setting arrays and a `tmc2160Config` array, matching the firmware-facing configuration structures.
+- **C header import/export:** Export a `.h` file and import the same format later to recover all included register values per channel.
 
 ## Quick start
 
@@ -29,8 +29,8 @@ Built with **plain HTML, CSS, and JavaScript**—no build step, backend, framewo
 3. Choose the number of channels using **Channels**, then select **Channel 0** (or another channel) under **Edit**.
 4. Use **Configuration Wizard** for a guided setup or select registers in the left sidebar for manual editing.
 5. Review the **Configuration checks** and **Motor current estimate** panels.
-6. Choose an **Output Mode**, then use **Copy C init** to copy the generated C code into your firmware project.
-7. Use **Export JSON** to save your configuration for later.
+6. Click **Export C header** to download `TMC2160_CHANNEL_CONFIGS.h`, or **Copy header** to copy its contents.
+7. Use **Import C header** to restore register configurations from a previously generated header.
 
 No package manager, server, compilation, or internet connection is required for the core editor.
 
@@ -38,16 +38,16 @@ No package manager, server, compilation, or internet connection is required for 
 
 | Area | Purpose |
 | --- | --- |
-| Top toolbar | Channel count/selection, channel copy, wizard, StallGuard dialog, JSON import/export, C code copy |
+| Top toolbar | Channel count/selection, channel copy, wizard, StallGuard dialog, C header import/export, header copy |
 | Left sidebar | Search, register filters, advanced-register visibility, register selection |
 | Center panel | Raw register value, bit display, editable named fields, include-in-C option |
-| Right sidebar | Generated C code, configuration warnings, current estimates |
+| Right sidebar | Generated C header, configuration warnings, current estimates |
 
 ### Editing register values
 
 Selecting a register displays its address, access mode, description, raw value, bits, and field controls. For example, instead of constructing the full `IHOLD_IRUN` word manually, change **`IRUN`**, **`IHOLD`**, and **`IHOLDDELAY`** directly.
 
-The **Include in C init** option controls which writable registers are emitted in the selected/included-output modes. Read-only registers are useful for decoding observed values, but are not emitted as initialization writes.
+The **Include in C init** option determines which writable registers appear in the exported header. Read-only registers are useful for decoding observed values, but are not emitted as initialization writes.
 
 ### Current configuration
 
@@ -72,17 +72,42 @@ Select a channel and open **StallGuard Setup** to adjust:
 
 The dialog updates register values for the **active channel**. StallGuard requires suitable speed/load conditions and tuning on the real motor. **`TCOOLTHRS` is also used by CoolStep**, so review interactions when enabling both features.
 
-## Generated C code
+## Generated C header
 
-The default **Multi-channel struct array** mode generates settings for each channel plus a channel configuration array and a helper function.
+**Export C header** downloads `TMC2160_CHANNEL_CONFIGS.h`. The same content appears in the preview and can be copied using **Copy header**. This header intentionally contains **only**:
 
-The emitted helper uses the firmware function:
+- `#ifndef TMC2160_CHANNEL_CONFIGS_H_` / `#define TMC2160_CHANNEL_CONFIGS_H_` and the closing `#endif`.
+- `#define TMC2160_CONFIG_CHANNELS N`.
+- One `static const TMC2160_RegisterSetting tmc2160_chX_settings[]` initializer for each zero-based channel.
+- `static const TMC2160_ChannelConfig tmc2160Config[TMC2160_CONFIG_CHANNELS]` referencing those arrays.
+
+Example (abbreviated):
 
 ```c
-TMC2160_WriteInt(channel, register_address, value);
+#ifndef TMC2160_CHANNEL_CONFIGS_H_
+#define TMC2160_CHANNEL_CONFIGS_H_
+
+#define TMC2160_CONFIG_CHANNELS 1
+
+/* ---------------- Channel 0 ---------------- */
+static const TMC2160_RegisterSetting tmc2160_ch0_settings[] =
+{
+    /* GCONF: MULTISTEP_FILT=1 */
+    { TMC2160_GCONF, 0x00000008 },
+};
+
+static const TMC2160_ChannelConfig tmc2160Config[TMC2160_CONFIG_CHANNELS] =
+{
+    { tmc2160_ch0_settings,
+      (uint8_t)(sizeof(tmc2160_ch0_settings) / sizeof(tmc2160_ch0_settings[0])) }, // Channel 0
+};
+
+#endif /* TMC2160_CHANNEL_CONFIGS_H_ */
 ```
 
-**You must provide this SPI write function and the register-address constants in your firmware**. The generator produces configuration data, not a complete standalone driver library. Other output modes produce active-channel writes for included registers or all writable registers.
+**Integration requirements:** Include this generated header *after* your project provides `TMC2160_RegisterSetting`, `TMC2160_ChannelConfig`, the `TMC2160_*` register constants, and `uint8_t` (from `<stdint.h>`). The tool does **not** generate typedefs, SPI functions, or a driver initialization function. An empty channel uses a dummy `{ 0, 0 }` array element but has a **zero** setting count, so no register is written.
+
+**Import C header** accepts this generated format (and equivalent arrays using known register tokens or numeric addresses). Import replaces the current per-channel register configurations and adjusts the number of channels. Register values and included flags round-trip; user interface state and board metadata such as sense resistance are not serialized in this C header.
 
 ## Project structure
 
